@@ -1,0 +1,5087 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "WARDOGS Monitor Agent API",
+    "version": "1.12.0",
+    "description": "查询、三语公告及已核验举报的受限处罚。无任意RCON接口。所有时间为Unix秒；受限处罚需要独立执行令牌。"
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:18761"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      },
+      "moderationBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "独立举报执行令牌，用于POST /v1/moderation/kicks及查询非人工operations；不可创建或读取人工授权处罚。"
+      },
+      "adminModerationBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "独立人工授权令牌，用于admin-kicks、admin-restrictions、player-search及查询source=admin的operations；需要精确角色与范围，不能用于普通查询或举报。 支持admin-cycle-adds，仅登记既有循环名单。"
+      }
+    },
+    "schemas": {
+      "ModerationDecision": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "verified",
+          "identityScore",
+          "violationScore",
+          "observedAt"
+        ],
+        "properties": {
+          "verified": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "identityScore": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "默认门槛0.99"
+          },
+          "violationScore": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "默认门槛0.95"
+          },
+          "observedAt": {
+            "type": "number",
+            "minimum": 0,
+            "description": "可信插件完成审核的时间decided_at；不是证据事件时间。默认最多300秒旧，未来偏差最多30秒。证据事件有效期由插件独立校验。"
+          }
+        }
+      },
+      "ModerationReason": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "zh",
+          "en",
+          "ja"
+        ],
+        "properties": {
+          "zh": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "description": "单行原因译文；渲染后的整条公告必须不超过200字符"
+          },
+          "en": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "description": "单行原因译文；渲染后的整条公告必须不超过200字符"
+          },
+          "ja": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "description": "单行原因译文；渲染后的整条公告必须不超过200字符"
+          }
+        }
+      },
+      "ModerationKickRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reportId",
+          "steamId",
+          "ruleId",
+          "ruleVersion",
+          "evidenceVersion",
+          "evidenceRefs",
+          "decision",
+          "reason"
+        ],
+        "properties": {
+          "reportId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "steamId": {
+            "type": "string",
+            "pattern": "^[0-9]{17}$"
+          },
+          "ruleId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "必须匹配moderation_rules；默认outside_combat及cheating，未启用base_camping。"
+          },
+          "ruleVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "必须精确匹配对应规则配置，默认均为字符串1。"
+          },
+          "evidenceVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "evidenceRefs": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "description": "只存引用，不抓取URL、不读取任意文件、不重新识别图片。"
+          },
+          "decision": {
+            "$ref": "#/components/schemas/ModerationDecision"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/ModerationReason"
+          }
+        }
+      },
+      "ModerationOperation": {
+        "type": "object",
+        "required": [
+          "operationId",
+          "reportId",
+          "steamId",
+          "source",
+          "status",
+          "kickStatus",
+          "announcementStatus",
+          "announcementJobIds",
+          "announcementJobs",
+          "createdAt",
+          "updatedAt",
+          "error",
+          "relatedOperationId",
+          "name"
+        ],
+        "properties": {
+          "operationId": {
+            "type": "string"
+          },
+          "reportId": {
+            "type": "string"
+          },
+          "steamId": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "report",
+              "auto_kd"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "accepted",
+              "resolving",
+              "kick_dispatching",
+              "announcements_pending",
+              "completed",
+              "offline",
+              "rejected",
+              "failed",
+              "unknown",
+              "superseded",
+              "cancelled",
+              "announcement_failed",
+              "announcement_unknown"
+            ]
+          },
+          "kickStatus": {
+            "type": "string",
+            "enum": [
+              "not_started",
+              "dispatching",
+              "confirmed",
+              "not_needed",
+              "failed",
+              "unknown"
+            ]
+          },
+          "announcementStatus": {
+            "type": "string",
+            "enum": [
+              "not_queued",
+              "pending",
+              "sent",
+              "partial",
+              "failed",
+              "unknown"
+            ]
+          },
+          "announcementJobIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 3
+          },
+          "announcementJobs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "language": {
+                  "type": "string",
+                  "enum": [
+                    "zh",
+                    "en",
+                    "ja"
+                  ]
+                },
+                "jobId": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "queued",
+                    "sending",
+                    "sent",
+                    "failed",
+                    "unknown",
+                    "cancelled"
+                  ]
+                }
+              }
+            }
+          },
+          "createdAt": {
+            "type": "number"
+          },
+          "updatedAt": {
+            "type": "number"
+          },
+          "error": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "code": {
+                "type": "string"
+              }
+            }
+          },
+          "relatedOperationId": {
+            "type": "string",
+            "nullable": true
+          },
+          "deduplicated": {
+            "type": "boolean",
+            "description": "仅POST返回"
+          }
+        }
+      },
+      "ModerationError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "AdminModerationActor": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "platform",
+          "botId",
+          "groupId",
+          "memberId",
+          "role"
+        ],
+        "properties": {
+          "platform": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "botId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "groupId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "memberId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "admin"
+            ]
+          }
+        }
+      },
+      "AdminModerationKickRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requestId",
+          "steamId",
+          "actor",
+          "requestedAt"
+        ],
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "稳定请求UUID；与请求正文一起在重试时保持不变"
+          },
+          "steamId": {
+            "type": "string",
+            "pattern": "^[0-9]{17}$",
+            "minLength": 17,
+            "maxLength": 17
+          },
+          "actor": {
+            "$ref": "#/components/schemas/AdminModerationActor"
+          },
+          "requestedAt": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Unix秒；默认有效120秒，容许未来偏差30秒，派发前再次检查"
+          }
+        }
+      },
+      "AdminModerationOperation": {
+        "type": "object",
+        "required": [
+          "operationId",
+          "steamId",
+          "source",
+          "status",
+          "kickStatus",
+          "announcementStatus",
+          "announcementJobIds",
+          "announcementJobs",
+          "createdAt",
+          "updatedAt",
+          "error",
+          "relatedOperationId",
+          "name",
+          "requestId",
+          "actor",
+          "requestedAt"
+        ],
+        "properties": {
+          "operationId": {
+            "type": "string"
+          },
+          "steamId": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "admin"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "accepted",
+              "resolving",
+              "kick_dispatching",
+              "announcements_pending",
+              "completed",
+              "offline",
+              "rejected",
+              "failed",
+              "unknown",
+              "superseded",
+              "cancelled",
+              "announcement_failed",
+              "announcement_unknown"
+            ]
+          },
+          "kickStatus": {
+            "type": "string",
+            "enum": [
+              "not_started",
+              "dispatching",
+              "confirmed",
+              "not_needed",
+              "failed",
+              "unknown"
+            ]
+          },
+          "announcementStatus": {
+            "type": "string",
+            "enum": [
+              "not_queued",
+              "pending",
+              "sent",
+              "partial",
+              "failed",
+              "unknown"
+            ]
+          },
+          "announcementJobIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 3
+          },
+          "announcementJobs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "language": {
+                  "type": "string",
+                  "enum": [
+                    "zh",
+                    "en",
+                    "ja"
+                  ]
+                },
+                "jobId": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "queued",
+                    "sending",
+                    "sent",
+                    "failed",
+                    "unknown",
+                    "cancelled"
+                  ]
+                }
+              }
+            }
+          },
+          "createdAt": {
+            "type": "number"
+          },
+          "updatedAt": {
+            "type": "number"
+          },
+          "error": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "code": {
+                "type": "string"
+              }
+            }
+          },
+          "relatedOperationId": {
+            "type": "string",
+            "nullable": true
+          },
+          "deduplicated": {
+            "type": "boolean",
+            "description": "仅POST返回"
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "actor": {
+            "$ref": "#/components/schemas/AdminModerationActor"
+          },
+          "requestedAt": {
+            "type": "number"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "kick"
+            ],
+            "description": "可选动作标识；现有在线踢出响应不返回此字段"
+          }
+        }
+      },
+      "MatchSnapshot": {
+        "type": "object",
+        "required": [
+          "observedAt",
+          "playerCount",
+          "maxPlayers",
+          "map",
+          "mode",
+          "teams",
+          "scoreAvailable",
+          "scoreKind"
+        ],
+        "properties": {
+          "observedAt": {
+            "type": "number",
+            "description": "Unix秒；本轮GET采集开始时间，最长缓存15秒"
+          },
+          "playerCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxPlayers": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          },
+          "map": {
+            "type": "string",
+            "nullable": true
+          },
+          "mode": {
+            "type": "string",
+            "nullable": true
+          },
+          "teams": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "name",
+                "score",
+                "playerCount"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "score": {
+                  "type": "number",
+                  "minimum": 0,
+                  "nullable": true
+                },
+                "playerCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "nullable": true
+                }
+              }
+            }
+          },
+          "scoreAvailable": {
+            "type": "boolean",
+            "description": "所有队伍分数都有效时为true；缺失不可推算为0"
+          },
+          "scoreKind": {
+            "type": "string",
+            "enum": [
+              "faction_score"
+            ],
+            "nullable": true
+          }
+        }
+      },
+      "AdminPlayerSearchRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "query",
+          "actor",
+          "requestedAt"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "actor": {
+            "$ref": "#/components/schemas/AdminModerationActor"
+          },
+          "requestedAt": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
+      },
+      "HistoricalPlayer": {
+        "type": "object",
+        "required": [
+          "steamId",
+          "name",
+          "aliases",
+          "online",
+          "lastSeen",
+          "source",
+          "sources",
+          "aliasesTruncated"
+        ],
+        "properties": {
+          "steamId": {
+            "type": "string",
+            "pattern": "^[0-9]{17}$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20
+          },
+          "online": {
+            "type": "boolean"
+          },
+          "lastSeen": {
+            "type": "number",
+            "nullable": true
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "online",
+              "history"
+            ]
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "aliasesTruncated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AdminPlayerSearchResponse": {
+        "type": "object",
+        "required": [
+          "observedAt",
+          "players",
+          "truncated",
+          "historyComplete"
+        ],
+        "properties": {
+          "observedAt": {
+            "type": "number"
+          },
+          "players": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "$ref": "#/components/schemas/HistoricalPlayer"
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "historyComplete": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AdminRestrictionOperation": {
+        "type": "object",
+        "required": [
+          "operationId",
+          "steamId",
+          "source",
+          "status",
+          "kickStatus",
+          "announcementStatus",
+          "announcementJobIds",
+          "announcementJobs",
+          "createdAt",
+          "updatedAt",
+          "error",
+          "relatedOperationId",
+          "name",
+          "requestId",
+          "actor",
+          "requestedAt",
+          "action",
+          "restrictionStatus",
+          "nativeBanStatus"
+        ],
+        "properties": {
+          "operationId": {
+            "type": "string"
+          },
+          "steamId": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "admin"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "accepted",
+              "resolving",
+              "announcements_pending",
+              "completed",
+              "rejected",
+              "failed",
+              "unknown",
+              "superseded",
+              "cancelled",
+              "announcement_failed",
+              "announcement_unknown",
+              "restriction_dispatching"
+            ]
+          },
+          "kickStatus": {
+            "type": "string",
+            "enum": [
+              "not_needed"
+            ]
+          },
+          "announcementStatus": {
+            "type": "string",
+            "enum": [
+              "not_queued",
+              "pending",
+              "sent",
+              "partial",
+              "failed",
+              "unknown"
+            ]
+          },
+          "announcementJobIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 3
+          },
+          "announcementJobs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "language": {
+                  "type": "string",
+                  "enum": [
+                    "zh",
+                    "en",
+                    "ja"
+                  ]
+                },
+                "jobId": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "queued",
+                    "sending",
+                    "sent",
+                    "failed",
+                    "unknown",
+                    "cancelled"
+                  ]
+                }
+              }
+            }
+          },
+          "createdAt": {
+            "type": "number"
+          },
+          "updatedAt": {
+            "type": "number"
+          },
+          "error": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "code": {
+                "type": "string"
+              }
+            }
+          },
+          "relatedOperationId": {
+            "type": "string",
+            "nullable": true
+          },
+          "deduplicated": {
+            "type": "boolean",
+            "description": "仅POST返回"
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "actor": {
+            "$ref": "#/components/schemas/AdminModerationActor"
+          },
+          "requestedAt": {
+            "type": "number"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "restriction"
+            ]
+          },
+          "restrictionStatus": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "restricted",
+              "cancelled",
+              "failed",
+              "unknown"
+            ]
+          },
+          "nativeBanStatus": {
+            "type": "string",
+            "enum": [
+              "not_requested"
+            ]
+          },
+          "priorAutomaticKick": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "operationId",
+              "steamId",
+              "source",
+              "kickStatus",
+              "confirmedAt"
+            ],
+            "properties": {
+              "operationId": {
+                "type": "string"
+              },
+              "steamId": {
+                "type": "string",
+                "pattern": "^[0-9]{17}$"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "auto_kd"
+                ]
+              },
+              "kickStatus": {
+                "type": "string",
+                "enum": [
+                  "confirmed"
+                ]
+              },
+              "confirmedAt": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "nullable": true,
+            "description": "同一SteamID在本次createdAt之前已确认的auto_kd踢出；确认时间来自操作确认审计，无法可靠关联时为null。与公告投递状态独立。"
+          }
+        }
+      },
+      "AdminRestrictionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requestId",
+          "steamId",
+          "actor",
+          "requestedAt"
+        ],
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "稳定请求UUID；与请求正文一起在重试时保持不变"
+          },
+          "steamId": {
+            "type": "string",
+            "pattern": "^[0-9]{17}$",
+            "minLength": 17,
+            "maxLength": 17
+          },
+          "actor": {
+            "$ref": "#/components/schemas/AdminModerationActor"
+          },
+          "requestedAt": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Unix秒；默认有效120秒，容许未来偏差30秒，派发前再次检查"
+          }
+        },
+        "description": "针对已知稳定SteamID，经管理员明确确认的离线永久重入限制；不伪造举报或执行原生ban"
+      },
+      "BanStatistics": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "observedAt",
+          "countingRule",
+          "totalPlayers",
+          "last24HoursPlayers",
+          "last12HoursPlayers",
+          "unknownTimePlayers",
+          "recordsSince",
+          "historyComplete"
+        ],
+        "properties": {
+          "observedAt": {
+            "type": "number",
+            "minimum": 0,
+            "description": "One cutoff in Unix seconds for the consistent local ledger snapshot."
+          },
+          "countingRule": {
+            "type": "string",
+            "enum": [
+              "unique_first_effective_ban_v1"
+            ]
+          },
+          "totalPlayers": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "last24HoursPlayers": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Unique first-effective bans in [observedAt-86400, observedAt]."
+          },
+          "last12HoursPlayers": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Unique first-effective bans in [observedAt-43200, observedAt]."
+          },
+          "unknownTimePlayers": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Included in total only; earlier uncertain history dominates later known receipts."
+          },
+          "recordsSince": {
+            "type": "number",
+            "nullable": true,
+            "description": "Currently null: no verified start of complete existing history."
+          },
+          "historyComplete": {
+            "type": "boolean",
+            "description": "Currently false: available ledgers and current native list do not prove complete lifetime coverage."
+          }
+        }
+      },
+      "AdminRecentKillsRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "actor",
+          "requestedAt"
+        ],
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/AdminModerationActor"
+          },
+          "requestedAt": {
+            "type": "number",
+            "minimum": 0
+          },
+          "windowSeconds": {
+            "type": "integer",
+            "enum": [
+              60,
+              300
+            ],
+            "default": 60,
+            "description": "可选；缺省60。只允许整数60或300，布尔、浮点、字符串和null均拒绝。"
+          }
+        }
+      },
+      "AdminRecentKillsResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "observedAt",
+          "windowStart",
+          "windowEnd",
+          "timeBasis",
+          "complete",
+          "events"
+        ],
+        "properties": {
+          "observedAt": {
+            "type": "number"
+          },
+          "windowStart": {
+            "type": "number"
+          },
+          "windowEnd": {
+            "type": "number"
+          },
+          "timeBasis": {
+            "type": "string",
+            "enum": [
+              "archive_received_at"
+            ]
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "events": {
+            "type": "array",
+            "maxItems": 1000,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "archiveId",
+                "eventId",
+                "serverId",
+                "receivedAt",
+                "killer",
+                "weapon",
+                "victim"
+              ],
+              "properties": {
+                "archiveId": {
+                  "type": "string",
+                  "pattern": "^[0-9]+$"
+                },
+                "eventId": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "serverId": {
+                  "type": "string"
+                },
+                "receivedAt": {
+                  "type": "number"
+                },
+                "killer": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "steamId",
+                    "name"
+                  ],
+                  "properties": {
+                    "steamId": {
+                      "type": "string",
+                      "nullable": true,
+                      "pattern": "^[0-9]{17}$"
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                },
+                "weapon": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "victim": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "steamId",
+                    "name"
+                  ],
+                  "properties": {
+                    "steamId": {
+                      "type": "string",
+                      "nullable": true,
+                      "pattern": "^[0-9]{17}$"
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "AdminCycleAddRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requestId",
+          "steamId",
+          "actor",
+          "requestedAt"
+        ],
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "稳定请求UUID；与请求正文一起在重试时保持不变"
+          },
+          "steamId": {
+            "type": "string",
+            "pattern": "^[0-9]{17}$",
+            "minLength": 17,
+            "maxLength": 17
+          },
+          "actor": {
+            "$ref": "#/components/schemas/AdminModerationActor"
+          },
+          "requestedAt": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Unix秒；默认有效120秒，容许未来偏差30秒，派发前再次检查"
+          }
+        },
+        "description": "精确SteamID的既有循环名单登记；不踢出、不追加封禁、不创建公告。离线需可信历史身份。"
+      },
+      "AdminCycleAddOperation": {
+        "type": "object",
+        "required": [
+          "operationId",
+          "steamId",
+          "source",
+          "status",
+          "kickStatus",
+          "announcementStatus",
+          "announcementJobIds",
+          "announcementJobs",
+          "createdAt",
+          "updatedAt",
+          "error",
+          "relatedOperationId",
+          "name",
+          "requestId",
+          "actor",
+          "requestedAt",
+          "action",
+          "nativeBanStatus",
+          "cycleStatus",
+          "alreadyEnabled",
+          "onlineAtCheck",
+          "registeredAt"
+        ],
+        "properties": {
+          "operationId": {
+            "type": "string"
+          },
+          "steamId": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "admin"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "accepted",
+              "resolving",
+              "cycle_dispatching",
+              "completed",
+              "cancelled",
+              "rejected",
+              "failed",
+              "unknown",
+              "superseded"
+            ]
+          },
+          "kickStatus": {
+            "type": "string",
+            "enum": [
+              "not_needed"
+            ]
+          },
+          "announcementStatus": {
+            "type": "string",
+            "enum": [
+              "not_queued"
+            ]
+          },
+          "announcementJobIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 0
+          },
+          "announcementJobs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "language": {
+                  "type": "string",
+                  "enum": [
+                    "zh",
+                    "en",
+                    "ja"
+                  ]
+                },
+                "jobId": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "queued",
+                    "sending",
+                    "sent",
+                    "failed",
+                    "unknown",
+                    "cancelled"
+                  ]
+                }
+              }
+            },
+            "maxItems": 0
+          },
+          "createdAt": {
+            "type": "number"
+          },
+          "updatedAt": {
+            "type": "number"
+          },
+          "error": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "code": {
+                "type": "string"
+              }
+            }
+          },
+          "relatedOperationId": {
+            "type": "string",
+            "nullable": true
+          },
+          "deduplicated": {
+            "type": "boolean",
+            "description": "仅POST返回"
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "actor": {
+            "$ref": "#/components/schemas/AdminModerationActor"
+          },
+          "requestedAt": {
+            "type": "number"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "cycle_add"
+            ]
+          },
+          "nativeBanStatus": {
+            "type": "string",
+            "enum": [
+              "not_requested"
+            ]
+          },
+          "cycleStatus": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "registered",
+              "cancelled",
+              "failed",
+              "unknown"
+            ]
+          },
+          "alreadyEnabled": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "登记前已启用；已有计时器保持，核验前null。"
+          },
+          "onlineAtCheck": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "权威在线名单核验时是否在线；不是动作执行或当前在线证明。"
+          },
+          "registeredAt": {
+            "type": "number",
+            "nullable": true,
+            "description": "该操作名单登记及同事务回执的Unix秒；非循环动作发生时间。"
+          }
+        }
+      },
+      "AdminUnbanRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requestId",
+          "steamId",
+          "actor",
+          "requestedAt"
+        ],
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "稳定请求UUID；与请求正文一起在重试时保持不变"
+          },
+          "steamId": {
+            "type": "string",
+            "pattern": "^[0-9]{17}$",
+            "minLength": 17,
+            "maxLength": 17
+          },
+          "actor": {
+            "$ref": "#/components/schemas/AdminModerationActor"
+          },
+          "requestedAt": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Unix秒；默认有效120秒，容许未来偏差30秒，派发前再次检查"
+          }
+        },
+        "description": "管理员解除原生ban与本地永久重入限制，保留历史和独立哈哈名单，不执行踢出或公告。"
+      },
+      "AdminUnbanOperation": {
+        "type": "object",
+        "required": [
+          "operationId",
+          "steamId",
+          "source",
+          "status",
+          "kickStatus",
+          "announcementStatus",
+          "announcementJobIds",
+          "announcementJobs",
+          "createdAt",
+          "updatedAt",
+          "error",
+          "relatedOperationId",
+          "name",
+          "requestId",
+          "actor",
+          "requestedAt",
+          "action",
+          "unbanStatus",
+          "nativeUnbanStatus",
+          "localReleaseStatus",
+          "nativeVerifiedAt",
+          "releasedAt"
+        ],
+        "properties": {
+          "operationId": {
+            "type": "string"
+          },
+          "steamId": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "admin"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "accepted",
+              "resolving",
+              "unban_dispatching",
+              "completed",
+              "partial",
+              "failed",
+              "unknown",
+              "rejected",
+              "superseded"
+            ]
+          },
+          "kickStatus": {
+            "type": "string",
+            "enum": [
+              "not_needed"
+            ]
+          },
+          "announcementStatus": {
+            "type": "string",
+            "enum": [
+              "not_queued"
+            ]
+          },
+          "announcementJobIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 0
+          },
+          "announcementJobs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "language": {
+                  "type": "string",
+                  "enum": [
+                    "zh",
+                    "en",
+                    "ja"
+                  ]
+                },
+                "jobId": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "queued",
+                    "sending",
+                    "sent",
+                    "failed",
+                    "unknown",
+                    "cancelled"
+                  ]
+                }
+              }
+            },
+            "maxItems": 0
+          },
+          "createdAt": {
+            "type": "number"
+          },
+          "updatedAt": {
+            "type": "number"
+          },
+          "error": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "code": {
+                "type": "string"
+              }
+            }
+          },
+          "relatedOperationId": {
+            "type": "string",
+            "nullable": true
+          },
+          "deduplicated": {
+            "type": "boolean",
+            "description": "仅POST返回"
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "actor": {
+            "$ref": "#/components/schemas/AdminModerationActor"
+          },
+          "requestedAt": {
+            "type": "number"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "unban"
+            ]
+          },
+          "unbanStatus": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "unbanned",
+              "partial",
+              "failed",
+              "unknown"
+            ]
+          },
+          "nativeUnbanStatus": {
+            "type": "string",
+            "enum": [
+              "not_checked",
+              "not_attempted",
+              "unbanned",
+              "already_unbanned",
+              "failed",
+              "unknown"
+            ]
+          },
+          "localReleaseStatus": {
+            "type": "string",
+            "enum": [
+              "not_attempted",
+              "released",
+              "already_released",
+              "not_restricted",
+              "failed",
+              "unknown"
+            ]
+          },
+          "nativeVerifiedAt": {
+            "type": "number",
+            "nullable": true,
+            "description": "Unix秒；无可靠确认时null"
+          },
+          "releasedAt": {
+            "type": "number",
+            "nullable": true,
+            "description": "Unix秒；无可靠确认时null"
+          },
+          "unknownHandoff": {
+            "type": "object",
+            "nullable": true,
+            "additionalProperties": false,
+            "required": [
+              "previousOperationId",
+              "source",
+              "previousStatus",
+              "status",
+              "transferredAt"
+            ],
+            "properties": {
+              "previousOperationId": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "auto_burst"
+                ]
+              },
+              "previousStatus": {
+                "type": "string",
+                "enum": [
+                  "unknown"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "transferred",
+                  "verified",
+                  "blocked"
+                ]
+              },
+              "transferredAt": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      },
+      "AdminCycleListRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "actor",
+          "requestedAt"
+        ],
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/AdminModerationActor"
+          },
+          "requestedAt": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
+      },
+      "AdminCycleListResponse": {
+        "type": "object",
+        "required": [
+          "observedAt",
+          "complete",
+          "players",
+          "policy"
+        ],
+        "properties": {
+          "observedAt": {
+            "type": "number"
+          },
+          "complete": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "players": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "steamId",
+                "name",
+                "online"
+              ],
+              "properties": {
+                "steamId": {
+                  "type": "string",
+                  "pattern": "^[0-9]{17}$"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "online": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "policy": {
+            "type": "object",
+            "description": "behavior_policy_v1固定策略，随机换队30..300秒、kill90..600秒；详见ADMIN_UNBAN_API.md"
+          }
+        }
+      },
+      "AdminUnbanSearchRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "query",
+          "actor",
+          "requestedAt"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "actor": {
+            "$ref": "#/components/schemas/AdminModerationActor"
+          },
+          "requestedAt": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
+      },
+      "AdminUnbanSearchResponse": {
+        "type": "object",
+        "required": [
+          "observedAt",
+          "complete",
+          "players",
+          "truncated"
+        ],
+        "properties": {
+          "observedAt": {
+            "type": "number"
+          },
+          "complete": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "players": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "object",
+              "required": [
+                "steamId",
+                "name",
+                "aliases",
+                "online",
+                "nativeBanned",
+                "localRestricted",
+                "nativeSyncState",
+                "source"
+              ],
+              "properties": {
+                "steamId": {
+                  "type": "string",
+                  "pattern": "^[0-9]{17}$"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "aliases": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "online": {
+                  "type": "boolean",
+                  "nullable": true,
+                  "description": "本查询不核验在线状态，固定null"
+                },
+                "nativeBanned": {
+                  "type": "boolean"
+                },
+                "localRestricted": {
+                  "type": "boolean"
+                },
+                "nativeSyncState": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "moderation_history"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "AdminSteamProfilesRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "steamIds",
+          "actor",
+          "requestedAt"
+        ],
+        "properties": {
+          "steamIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9]{17}$"
+            }
+          },
+          "actor": {
+            "$ref": "#/components/schemas/AdminModerationActor"
+          },
+          "requestedAt": {
+            "type": "number"
+          }
+        }
+      },
+      "SteamProfilePart": {
+        "type": "object",
+        "required": [
+          "status",
+          "observedAt",
+          "cacheHit"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "not_found",
+              "unavailable"
+            ]
+          },
+          "observedAt": {
+            "type": "number",
+            "nullable": true
+          },
+          "cacheHit": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              }
+            }
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "avatarUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "countryCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "stateCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "visibilityState": {
+            "type": "integer",
+            "nullable": true
+          },
+          "cityId": {
+            "type": "integer",
+            "nullable": true
+          },
+          "accountCreatedAt": {
+            "type": "integer",
+            "nullable": true
+          },
+          "countrySource": {
+            "type": "string",
+            "enum": [
+              "self_reported_profile"
+            ],
+            "description": "仅用户公开填写的位置，不是IP或商店国家。"
+          }
+        }
+      },
+      "SteamBanPart": {
+        "type": "object",
+        "required": [
+          "status",
+          "observedAt",
+          "cacheHit"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "unavailable"
+            ]
+          },
+          "observedAt": {
+            "type": "number",
+            "nullable": true
+          },
+          "cacheHit": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              }
+            }
+          },
+          "vacBanned": {
+            "type": "boolean"
+          },
+          "communityBanned": {
+            "type": "boolean"
+          },
+          "numberOfVacBans": {
+            "type": "integer"
+          },
+          "daysSinceLastBan": {
+            "type": "integer"
+          },
+          "numberOfGameBans": {
+            "type": "integer"
+          },
+          "economyBan": {
+            "type": "string"
+          }
+        }
+      },
+      "AdminSteamProfilesResponse": {
+        "type": "object",
+        "required": [
+          "observedAt",
+          "cacheTtlSeconds",
+          "source",
+          "complete",
+          "players"
+        ],
+        "properties": {
+          "observedAt": {
+            "type": "number"
+          },
+          "cacheTtlSeconds": {
+            "type": "integer",
+            "enum": [
+              600
+            ]
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "steam_web_api"
+            ]
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "players": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "object",
+              "required": [
+                "steamId",
+                "profileUrl",
+                "profile",
+                "bans"
+              ],
+              "properties": {
+                "steamId": {
+                  "type": "string"
+                },
+                "profileUrl": {
+                  "type": "string"
+                },
+                "profile": {
+                  "$ref": "#/components/schemas/SteamProfilePart"
+                },
+                "bans": {
+                  "$ref": "#/components/schemas/SteamBanPart"
+                }
+              }
+            }
+          }
+        }
+      },
+      "AdminPunishmentSearchRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "query",
+          "actor",
+          "requestedAt"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "actor": {
+            "$ref": "#/components/schemas/AdminModerationActor"
+          },
+          "requestedAt": {
+            "type": "number"
+          }
+        }
+      },
+      "AdminPunishmentHistoryRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "steamId",
+          "actor",
+          "requestedAt"
+        ],
+        "properties": {
+          "steamId": {
+            "type": "string",
+            "pattern": "^[0-9]{17}$"
+          },
+          "actor": {
+            "$ref": "#/components/schemas/AdminModerationActor"
+          },
+          "requestedAt": {
+            "type": "number"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 20
+          },
+          "cursor": {
+            "type": "string",
+            "nullable": true,
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        }
+      },
+      "PunishmentPlayer": {
+        "type": "object",
+        "required": [
+          "steamId",
+          "name",
+          "aliases",
+          "aliasesTruncated",
+          "online",
+          "source"
+        ],
+        "properties": {
+          "steamId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "aliases": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "type": "string",
+              "maxLength": 128
+            }
+          },
+          "aliasesTruncated": {
+            "type": "boolean"
+          },
+          "online": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "固定null，不核验在线状态。"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "local_moderation_history"
+            ]
+          }
+        }
+      },
+      "PunishmentRecord": {
+        "type": "object",
+        "required": [
+          "recordId",
+          "type",
+          "name",
+          "timestamp",
+          "timeBasis",
+          "effectiveAt",
+          "reason",
+          "reasonKnown",
+          "reasonTruncated",
+          "source",
+          "executionStatus",
+          "kickStatus",
+          "outcomes",
+          "errorCode"
+        ],
+        "properties": {
+          "recordId": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "kick_confirmation",
+              "rejoin_restriction",
+              "kick_request",
+              "restriction_request",
+              "cycle_registration",
+              "unban_verification",
+              "restriction_release",
+              "team_switch",
+              "console_kill",
+              "behavior_action",
+              "burst_detection"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 128
+          },
+          "timestamp": {
+            "type": "number"
+          },
+          "effectiveAt": {
+            "type": "number",
+            "nullable": true
+          },
+          "timeBasis": {
+            "type": "string",
+            "enum": [
+              "kick_confirmed_at",
+              "ledger_recorded_at_effective_unknown",
+              "restriction_created_at",
+              "operation_created_at",
+              "release_recorded_at",
+              "behavior_action_created_at",
+              "detection_created_at"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 256
+          },
+          "reasonKnown": {
+            "type": "boolean"
+          },
+          "reasonTruncated": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "object",
+            "required": [
+              "category",
+              "code"
+            ],
+            "properties": {
+              "category": {
+                "type": "string",
+                "enum": [
+                  "automatic",
+                  "manual",
+                  "report",
+                  "unknown"
+                ]
+              },
+              "code": {
+                "type": "string"
+              }
+            }
+          },
+          "executionStatus": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "applied",
+              "pending",
+              "failed",
+              "unknown",
+              "not_executed",
+              "registered",
+              "already_registered",
+              "verified_clear",
+              "partial"
+            ]
+          },
+          "kickStatus": {
+            "type": "string",
+            "enum": [
+              "confirmed",
+              "pending",
+              "failed",
+              "unknown",
+              "not_executed",
+              "not_applicable"
+            ]
+          },
+          "outcomes": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "nativeUnbanStatus": {
+                "type": "string",
+                "nullable": true
+              },
+              "localReleaseStatus": {
+                "type": "string",
+                "nullable": true
+              }
+            }
+          },
+          "errorCode": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "AdminPunishmentSearchResponse": {
+        "type": "object",
+        "required": [
+          "observedAt",
+          "complete",
+          "truncated",
+          "historyComplete",
+          "players"
+        ],
+        "properties": {
+          "observedAt": {
+            "type": "number"
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "historyComplete": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "players": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "$ref": "#/components/schemas/PunishmentPlayer"
+            }
+          }
+        }
+      },
+      "AdminPunishmentHistoryResponse": {
+        "type": "object",
+        "required": [
+          "observedAt",
+          "snapshotAt",
+          "snapshotMode",
+          "player",
+          "historyComplete",
+          "coverage",
+          "currentState",
+          "records",
+          "hasMore",
+          "nextCursor",
+          "responseLimited"
+        ],
+        "properties": {
+          "observedAt": {
+            "type": "number"
+          },
+          "snapshotAt": {
+            "type": "number"
+          },
+          "snapshotMode": {
+            "type": "string",
+            "enum": [
+              "membership_fenced_live_status"
+            ]
+          },
+          "player": {
+            "$ref": "#/components/schemas/PunishmentPlayer"
+          },
+          "historyComplete": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "coverage": {
+            "type": "string",
+            "enum": [
+              "local_management_ledger_only"
+            ]
+          },
+          "currentState": {
+            "type": "object",
+            "properties": {
+              "localRestrictionStatus": {
+                "type": "string",
+                "nullable": true
+              },
+              "nativeBanSyncStatus": {
+                "type": "string",
+                "nullable": true
+              },
+              "nativeBanSyncObservedAt": {
+                "type": "number",
+                "nullable": true
+              },
+              "nativeBanLiveVerified": {
+                "type": "boolean",
+                "enum": [
+                  false
+                ]
+              },
+              "cycleEnabled": {
+                "type": "boolean"
+              }
+            }
+          },
+          "records": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "$ref": "#/components/schemas/PunishmentRecord"
+            }
+          },
+          "hasMore": {
+            "type": "boolean"
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 4096
+          },
+          "responseLimited": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CurrentRestrictionSource": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "code"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": [
+              "none",
+              "automatic",
+              "manual",
+              "report",
+              "unknown"
+            ]
+          },
+          "code": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "AdminCurrentRestriction": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "steamId",
+          "online",
+          "onlineObservedAt",
+          "localRestricted",
+          "localRestrictionStatus",
+          "localObservedAt",
+          "nativeBanned",
+          "nativeObservedAt",
+          "nativeSyncState",
+          "currentAutomaticRestriction",
+          "sourceComplete",
+          "localSource",
+          "nativeSource"
+        ],
+        "properties": {
+          "steamId": {
+            "type": "string",
+            "pattern": "^[0-9]{17}$"
+          },
+          "online": {
+            "type": "boolean"
+          },
+          "onlineObservedAt": {
+            "type": "number"
+          },
+          "localRestricted": {
+            "type": "boolean"
+          },
+          "localRestrictionStatus": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "active",
+              "dispatching",
+              "unknown",
+              null
+            ]
+          },
+          "localObservedAt": {
+            "type": "number"
+          },
+          "nativeBanned": {
+            "type": "boolean"
+          },
+          "nativeObservedAt": {
+            "type": "number"
+          },
+          "nativeSyncState": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "pending",
+              "dispatching",
+              "confirmed",
+              "unknown",
+              null
+            ]
+          },
+          "currentAutomaticRestriction": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "True if at least one current effective restriction has verified automatic provenance; null if restricted but provenance unknown; false if unrestricted or all effective sources verified nonautomatic."
+          },
+          "sourceComplete": {
+            "type": "boolean"
+          },
+          "localSource": {
+            "$ref": "#/components/schemas/CurrentRestrictionSource"
+          },
+          "nativeSource": {
+            "$ref": "#/components/schemas/CurrentRestrictionSource"
+          }
+        }
+      },
+      "AdminCurrentRestrictionsRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "steamIds",
+          "actor",
+          "requestedAt"
+        ],
+        "properties": {
+          "steamIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9]{17}$"
+            }
+          },
+          "actor": {
+            "$ref": "#/components/schemas/AdminModerationActor"
+          },
+          "requestedAt": {
+            "type": "number"
+          }
+        }
+      },
+      "AdminCurrentRestrictionsResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "observedAt",
+          "complete",
+          "players"
+        ],
+        "properties": {
+          "observedAt": {
+            "type": "number"
+          },
+          "complete": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "players": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/AdminCurrentRestriction"
+            }
+          }
+        }
+      },
+      "AdminPlayerKillsRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "steamId",
+          "actor",
+          "requestedAt"
+        ],
+        "properties": {
+          "steamId": {
+            "type": "string",
+            "pattern": "^[0-9]{17}$"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 20
+          },
+          "actor": {
+            "$ref": "#/components/schemas/AdminModerationActor"
+          },
+          "requestedAt": {
+            "type": "number"
+          }
+        }
+      },
+      "AdminPlayerKillsResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "observedAt",
+          "timeBasis",
+          "steamId",
+          "limit",
+          "complete",
+          "hasMore",
+          "events",
+          "coverage"
+        ],
+        "properties": {
+          "observedAt": {
+            "type": "number"
+          },
+          "timeBasis": {
+            "enum": [
+              "archive_received_at"
+            ]
+          },
+          "steamId": {
+            "type": "string",
+            "pattern": "^[0-9]{17}$"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          },
+          "complete": {
+            "enum": [
+              true
+            ]
+          },
+          "hasMore": {
+            "type": "boolean"
+          },
+          "events": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "archiveId",
+                "eventId",
+                "serverId",
+                "receivedAt",
+                "gameTimeSeconds",
+                "killer",
+                "victim",
+                "weapon",
+                "relationship"
+              ],
+              "properties": {
+                "archiveId": {
+                  "type": "string"
+                },
+                "eventId": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "serverId": {
+                  "type": "string"
+                },
+                "receivedAt": {
+                  "type": "number"
+                },
+                "gameTimeSeconds": {
+                  "type": "number",
+                  "minimum": 0,
+                  "nullable": true
+                },
+                "killer": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "steamId",
+                    "name",
+                    "faction"
+                  ],
+                  "properties": {
+                    "steamId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "faction": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                },
+                "victim": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "steamId",
+                    "name",
+                    "faction"
+                  ],
+                  "properties": {
+                    "steamId": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "name": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "faction": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                },
+                "weapon": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "relationship": {
+                  "type": "string",
+                  "enum": [
+                    "friendly",
+                    "enemy",
+                    "self",
+                    "unknown"
+                  ]
+                }
+              }
+            }
+          },
+          "coverage": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "scope",
+              "historyComplete",
+              "recordsSince",
+              "sourceObservedAt",
+              "caughtUp"
+            ],
+            "properties": {
+              "scope": {
+                "enum": [
+                  "retained_local_archive"
+                ]
+              },
+              "historyComplete": {
+                "enum": [
+                  false
+                ]
+              },
+              "recordsSince": {
+                "type": "number",
+                "nullable": true
+              },
+              "sourceObservedAt": {
+                "type": "number"
+              },
+              "caughtUp": {
+                "enum": [
+                  true
+                ]
+              }
+            }
+          }
+        }
+      },
+      "AdminBanRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requestId",
+          "steamId",
+          "actor",
+          "requestedAt"
+        ],
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "稳定请求UUID；与请求正文一起在重试时保持不变"
+          },
+          "steamId": {
+            "type": "string",
+            "pattern": "^[0-9]{17}$",
+            "minLength": 17,
+            "maxLength": 17
+          },
+          "actor": {
+            "$ref": "#/components/schemas/AdminModerationActor"
+          },
+          "requestedAt": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Unix秒；默认有效120秒，容许未来偏差30秒，派发前再次检查"
+          }
+        },
+        "description": "管理员解除原生ban与本地永久重入限制，保留历史和独立哈哈名单，不执行踢出或公告。"
+      },
+      "AdminBanOperation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operationId",
+          "source",
+          "action",
+          "requestId",
+          "steamId",
+          "actor",
+          "requestedAt",
+          "createdAt",
+          "updatedAt",
+          "status",
+          "banStatus",
+          "nativeBanStatus",
+          "localRestrictionStatus",
+          "onlineBefore",
+          "removalStatus",
+          "nativeVerifiedAt",
+          "localVerifiedAt",
+          "kickStatus",
+          "announcementStatus",
+          "announcementJobIds",
+          "announcementJobs",
+          "error"
+        ],
+        "properties": {
+          "operationId": {
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "admin"
+            ]
+          },
+          "action": {
+            "enum": [
+              "ban"
+            ]
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "steamId": {
+            "type": "string"
+          },
+          "actor": {
+            "$ref": "#/components/schemas/AdminModerationActor"
+          },
+          "requestedAt": {
+            "type": "number"
+          },
+          "createdAt": {
+            "type": "number"
+          },
+          "updatedAt": {
+            "type": "number"
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "resolving",
+              "ban_dispatching",
+              "completed",
+              "partial",
+              "unknown",
+              "failed"
+            ]
+          },
+          "banStatus": {
+            "enum": [
+              "pending",
+              "banned",
+              "partial",
+              "unknown",
+              "failed"
+            ]
+          },
+          "nativeBanStatus": {
+            "enum": [
+              "not_checked",
+              "banned",
+              "already_banned",
+              "failed",
+              "unknown"
+            ]
+          },
+          "localRestrictionStatus": {
+            "enum": [
+              "not_attempted",
+              "restricted",
+              "already_restricted",
+              "not_restricted",
+              "unknown",
+              "exempt"
+            ]
+          },
+          "onlineBefore": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "removalStatus": {
+            "enum": [
+              "not_checked",
+              "confirmed",
+              "not_needed",
+              "still_online",
+              "unknown"
+            ]
+          },
+          "nativeVerifiedAt": {
+            "type": "number",
+            "nullable": true
+          },
+          "localVerifiedAt": {
+            "type": "number",
+            "nullable": true
+          },
+          "kickStatus": {
+            "enum": [
+              "not_attempted"
+            ]
+          },
+          "announcementStatus": {
+            "enum": [
+              "not_queued"
+            ]
+          },
+          "announcementJobIds": {
+            "type": "array",
+            "maxItems": 0
+          },
+          "announcementJobs": {
+            "type": "array",
+            "maxItems": 0
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              }
+            },
+            "nullable": true
+          },
+          "deduplicated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AdminPlayerSanctionSummaryRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "steamId",
+          "actor",
+          "requestedAt"
+        ],
+        "properties": {
+          "steamId": {
+            "type": "string",
+            "pattern": "^[0-9]{17}$"
+          },
+          "actor": {
+            "$ref": "#/components/schemas/AdminModerationActor"
+          },
+          "requestedAt": {
+            "type": "number"
+          }
+        }
+      },
+      "AdminPlayerSanctionSummaryResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "observedAt",
+          "steamId",
+          "countingRule",
+          "banCount",
+          "unbanCount",
+          "countsAreLowerBounds",
+          "complete",
+          "historyComplete",
+          "unknownItems",
+          "coverage",
+          "recordsSince",
+          "alerts"
+        ],
+        "properties": {
+          "observedAt": {
+            "type": "number"
+          },
+          "steamId": {
+            "type": "string",
+            "pattern": "^[0-9]{17}$"
+          },
+          "countingRule": {
+            "type": "string",
+            "enum": [
+              "verified_sanction_cycles_v1"
+            ]
+          },
+          "banCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unbanCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "countsAreLowerBounds": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "complete": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "historyComplete": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "unknownItems": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "coverage": {
+            "type": "string",
+            "enum": [
+              "retained_local_sanction_ledger"
+            ]
+          },
+          "recordsSince": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 0
+          },
+          "alerts": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "repeatedBan",
+              "repeatedUnban"
+            ],
+            "properties": {
+              "repeatedBan": {
+                "type": "boolean"
+              },
+              "repeatedUnban": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      },
+      "AdminPlayerChatsRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "actor",
+          "requestedAt"
+        ],
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 20
+          },
+          "actor": {
+            "$ref": "#/components/schemas/AdminModerationActor"
+          },
+          "requestedAt": {
+            "type": "number"
+          },
+          "steamId": {
+            "type": "string",
+            "pattern": "^[0-9]{17}$"
+          },
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "Global",
+              "Team",
+              "Squad",
+              "Proximity"
+            ]
+          }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "steamId"
+            ],
+            "not": {
+              "required": [
+                "query"
+              ]
+            }
+          },
+          {
+            "required": [
+              "query"
+            ],
+            "not": {
+              "required": [
+                "steamId"
+              ]
+            }
+          }
+        ]
+      },
+      "AdminPlayerChatsResponse": {
+        "type": "object",
+        "description": "管理员只读聊天历史；status=ok返回messages及coverage，status=candidates返回players且messages为空。消息逐条标明时间和来源。详见PLAYER_CHATS_API.md。",
+        "required": [
+          "observedAt",
+          "status",
+          "complete",
+          "messages"
+        ],
+        "properties": {
+          "observedAt": {
+            "type": "number"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "candidates"
+            ]
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "steamId": {
+            "type": "string"
+          },
+          "messages": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "object"
+            }
+          },
+          "players": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "object",
+              "required": [
+                "steamId",
+                "name"
+              ],
+              "properties": {
+                "steamId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string",
+                  "nullable": true
+                }
+              }
+            }
+          },
+          "coverage": {
+            "type": "object"
+          },
+          "hasMore": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/healthz": {
+      "get": {
+        "summary": "进程存活且最近90秒内至少一次成功查询玩家；失败503",
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "认证失败"
+          },
+          "404": {
+            "description": "任务不存在"
+          },
+          "503": {
+            "description": "尚未成功查询或查询过期"
+          }
+        },
+        "security": []
+      }
+    },
+    "/v1/state": {
+      "get": {
+        "summary": "监控策略、最近成功轮询、队列长度与投递统计",
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "认证失败"
+          },
+          "404": {
+            "description": "任务不存在"
+          }
+        }
+      }
+    },
+    "/v1/players": {
+      "get": {
+        "summary": "最近一次轮询的玩家列表及 observedAt",
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "认证失败"
+          },
+          "404": {
+            "description": "任务不存在"
+          }
+        }
+      }
+    },
+    "/v1/jobs/{jobId}": {
+      "get": {
+        "summary": "公告任务状态 queued/sending/sent/failed/unknown/cancelled",
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "认证失败"
+          },
+          "404": {
+            "description": "任务不存在"
+          }
+        },
+        "parameters": [
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "summary": "本接口定义",
+        "responses": {
+          "200": {
+            "description": "成功"
+          },
+          "401": {
+            "description": "认证失败"
+          },
+          "404": {
+            "description": "任务不存在"
+          }
+        }
+      }
+    },
+    "/v1/broadcast": {
+      "post": {
+        "summary": "三语全服公告一起入队；返回jobIds对应中文、英语、日语，分别查询投递结果",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "建议必传；同键同消息返回原任务，不同消息返回400；保留7天",
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "message",
+                  "english",
+                  "japanese"
+                ],
+                "properties": {
+                  "message": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": "单行可打印字符"
+                  },
+                  "english": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "japanese": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "入队成功，返回 jobId 和 accepted"
+          },
+          "400": {
+            "description": "参数错误或队列已满"
+          },
+          "401": {
+            "description": "认证失败"
+          }
+        }
+      }
+    },
+    "/v1/moderation/kicks": {
+      "post": {
+        "summary": "受理已核验举报的处罚；受理不等于踢出成功",
+        "description": "总请求体最多16384字节。受信插件提交决策，服务校验规则、门槛及时间，执行前实时复核SteamID64。相同幂等键不同请求返回409；相同reportId+evidenceVersion去重。",
+        "security": [
+          {
+            "moderationBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModerationKickRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "已受理或返回同一操作；必须查询阶段结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationOperation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "输入结构或文案错误、缺失幂等键",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "缺失或错误执行令牌",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "同幂等键或同举报证据版本携带不同请求",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求体超过16384字节",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "规则未启用、版本不匹配、分数不足或审核结果已过期",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "处罚待处理队列已满",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "未配置独立执行令牌",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/moderation/operations/{operationId}": {
+      "get": {
+        "summary": "查询处罚与关联三语公告的持久化阶段",
+        "security": [
+          {
+            "moderationBearer": []
+          },
+          {
+            "adminModerationBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "当前操作状态；unknown禁止盲目重放",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ModerationOperation"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AdminModerationOperation"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AdminRestrictionOperation"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AdminCycleAddOperation"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AdminUnbanOperation"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AdminBanOperation"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "缺失或错误执行令牌",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "操作不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "未配置独立执行令牌",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          }
+        },
+        "description": "按令牌隔离操作来源。人工令牌只读source=admin，举报令牌只读其他来源；跨来源返回404。"
+      }
+    },
+    "/v1/moderation/admin-kicks": {
+      "post": {
+        "summary": "精确SteamID人工授权踢出，固定原因，不使用举报证据或模型分数",
+        "security": [
+          {
+            "adminModerationBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminModerationKickRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "已接受或返回幂等记录，尚不表示踢出完成",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminModerationOperation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "字段、精确ID、时间类型或幂等键无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "缺失或错误人工令牌",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "角色或机器人及群授权范围不符",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "幂等键或requestId被不同正文占用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "正文超过16384字节",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "请求过期或未来时间超限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "处罚队列已满",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "未配置人工执行令牌",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/match": {
+      "get": {
+        "summary": "只读查询真实队伍分数及服务器人数",
+        "description": "来源为游戏GET /v1/status与GET /v1/players，缓存最多15秒；无玩家名字和SteamID。失败不返回过期成功数据。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "新鲜快照；比分缺失时scoreAvailable=false且缺失score为null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchSnapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "仅接受原查询令牌，人工或举报执行令牌不能代替"
+          },
+          "503": {
+            "description": "match_upstream_unavailable、match_data_stale或match_invalid_upstream",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/moderation/player-search": {
+      "post": {
+        "summary": "管理员历史候选检索，在线标志来自最多15秒旧的本地完整名单，不创建处罚",
+        "security": [
+          {
+            "adminModerationBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminPlayerSearchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "最多20个稳定SteamID候选，lastSeen可能未知",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminPlayerSearchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/moderation/admin-restrictions": {
+      "post": {
+        "summary": "显式确认的离线永久重入限制登记；不实际踢出、不调用原生ban",
+        "security": [
+          {
+            "adminModerationBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminRestrictionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "仅受理；查询restrictionStatus确认本地登记与公告状态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminRestrictionOperation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "字段、精确ID、时间类型或幂等键无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "缺失或错误人工令牌",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "角色或机器人及群授权范围不符",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "幂等键或requestId被不同正文占用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "正文超过16384字节",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "请求过期或未来时间超限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "处罚队列已满",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "未配置人工令牌或永久重入执行器",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/moderation/ban-statistics": {
+      "get": {
+        "summary": "统一封禁人数，按SteamID64首次生效去重",
+        "description": "Cumulative union of effective permanent rejoin restrictions and confirmed native bans. Aggregate counts only. Native state is verified read-only; unavailable/invalid sources return 503, never fake zero counts. No player details. Unknown historical time is not counted as a recent ban.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Consistent aggregate snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BanStatistics"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid query token; admin/report execution tokens cannot query."
+          },
+          "503": {
+            "description": "Statistics disabled or native/local data source unavailable."
+          }
+        }
+      }
+    },
+    "/v1/moderation/recent-kills": {
+      "post": {
+        "summary": "管理员查询本地接收的近60秒或300秒击杀记录，缺省60秒",
+        "security": [
+          {
+            "adminModerationBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminRecentKillsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "最多1000条，complete=false时不得声称全量或生成可处罚序号列表；缺失killer SteamID不得处罚",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminRecentKillsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "严格字段校验失败，或windowSeconds不是整数60或300（invalid_recent_kills_window）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/moderation/admin-cycle-adds": {
+      "post": {
+        "summary": "管理员登记既有循环惩罚名单；由现有worker接手，不执行即时处罚或公告",
+        "security": [
+          {
+            "adminModerationBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminCycleAddRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "受理；同一operationId查询cycleStatus=registered确认登记，不能表示循环动作已经执行",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCycleAddOperation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "字段、精确ID、时间类型或幂等键无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "缺失或错误人工令牌",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "角色或机器人及群授权范围不符",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "幂等键或requestId被不同正文占用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "正文超过16384字节",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "请求过期或未来时间超限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "处罚队列已满",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "未配置管理员令牌、循环执行器或本地登记存储不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/moderation/admin-unbans": {
+      "post": {
+        "summary": "管理员原生解封与本地永久重入释放，返回分项结果；未知不重放",
+        "security": [
+          {
+            "adminModerationBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminUnbanRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "仅受理；GET operation查询unbanStatus与两项子状态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUnbanOperation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "字段、精确ID、时间类型或幂等键无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "缺失或错误人工令牌",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "角色或机器人及群授权范围不符",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "幂等键或requestId被不同正文占用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "正文超过16384字节",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "请求过期或未来时间超限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "处罚队列已满",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "未配置管理员令牌、循环执行器或本地登记存储不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/moderation/cycle-list": {
+      "post": {
+        "summary": "管理员只读启用哈哈名单及实际策略说明",
+        "security": [
+          {
+            "adminModerationBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminCycleListRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "只读查询成功，无处罚或公告副作用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCycleListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "权威名单、数据时效或本地存储不可用，不返回伪空名单",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/moderation/unban-search": {
+      "post": {
+        "summary": "管理员只读搜索原生ban、本地限制及可信历史身份",
+        "security": [
+          {
+            "adminModerationBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminUnbanSearchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "只读查询成功，无处罚或公告副作用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUnbanSearchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "权威名单、数据时效或本地存储不可用，不返回伪空名单",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/moderation/steam-profiles": {
+      "post": {
+        "summary": "管理员批量查询公开Steam资料与封禁历史，只读且不触发处罚。",
+        "security": [
+          {
+            "adminModerationBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminSteamProfilesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "按请求顺序返回，每部分独立状态，部分失败complete=false。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminSteamProfilesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "字段或SteamID列表无效"
+          },
+          "401": {
+            "description": "不是管理员令牌"
+          },
+          "403": {
+            "description": "角色或范围拒绝"
+          },
+          "422": {
+            "description": "请求过期或来自未来"
+          },
+          "503": {
+            "description": "密钥未配置、上游全部不可用、限流或存储不可用"
+          }
+        }
+      }
+    },
+    "/v1/moderation/punishment-search": {
+      "post": {
+        "summary": "管理员只读处罚身份检索",
+        "security": [
+          {
+            "adminModerationBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminPunishmentSearchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "仅本地记录，最多65536 UTF-8字节；不返回原操作者和其他群身份。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminPunishmentSearchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "字段、游标或限制无效"
+          },
+          "401": {
+            "description": "不是admin令牌"
+          },
+          "403": {
+            "description": "角色或范围拒绝"
+          },
+          "404": {
+            "description": "精确SteamID没有可信身份记录"
+          },
+          "422": {
+            "description": "管理员请求过期或未来"
+          },
+          "503": {
+            "description": "记录源不可用，不冒充空记录"
+          }
+        }
+      }
+    },
+    "/v1/moderation/punishment-history": {
+      "post": {
+        "summary": "管理员只读处罚证据分页，不执行处罚",
+        "security": [
+          {
+            "adminModerationBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminPunishmentHistoryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "仅本地记录，最多65536 UTF-8字节；不返回原操作者和其他群身份。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminPunishmentHistoryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "字段、游标或限制无效"
+          },
+          "401": {
+            "description": "不是admin令牌"
+          },
+          "403": {
+            "description": "角色或范围拒绝"
+          },
+          "404": {
+            "description": "精确SteamID没有可信身份记录"
+          },
+          "422": {
+            "description": "管理员请求过期或未来"
+          },
+          "503": {
+            "description": "记录源不可用，不冒充空记录"
+          }
+        }
+      }
+    },
+    "/v1/server-identity": {
+      "get": {
+        "summary": "Current game server ID only; no connection details",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fresh identity observed within 90 seconds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "serverId",
+                    "observedAt"
+                  ],
+                  "properties": {
+                    "serverId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "observedAt": {
+                      "type": "number",
+                      "description": "Unix seconds of last successful RCON observation"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Existing query token required"
+          },
+          "503": {
+            "description": "Identity missing, failed, or stale"
+          }
+        }
+      }
+    },
+    "/v1/moderation/current-restrictions": {
+      "post": {
+        "summary": "Administrator exact-SteamID current restrictions and verified current provenance",
+        "security": [
+          {
+            "adminModerationBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminCurrentRestrictionsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Complete current state; provenance uncertainty is explicit and independent of completeness",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminCurrentRestrictionsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request, credential/scope/role/time failure, unavailable/unstable source; never implicit offline or unbanned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid request, credential/scope/role/time failure, unavailable/unstable source; never implicit offline or unbanned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Invalid request, credential/scope/role/time failure, unavailable/unstable source; never implicit offline or unbanned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid request, credential/scope/role/time failure, unavailable/unstable source; never implicit offline or unbanned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Invalid request, credential/scope/role/time failure, unavailable/unstable source; never implicit offline or unbanned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/moderation/player-kills": {
+      "post": {
+        "summary": "管理员按精确SteamID查询全量本地留存历史的最新1至50条击杀，默认20条",
+        "security": [
+          {
+            "adminModerationBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminPlayerKillsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "一份新鲜只读快照，接收时间排序，保留原内部计时，敌友不明返回unknown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminPlayerKillsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "字段、SteamID或limit非法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/moderation/admin-bans": {
+      "post": {
+        "summary": "管理员明确永久封禁，原生与本地分别回执，不调用kick或公告",
+        "security": [
+          {
+            "adminModerationBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminBanRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "仅受理；同operation查询分项，部分成功或未知不得表述为完整封禁",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminBanOperation"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "字段、精确ID、时间类型或幂等键无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "缺失或错误人工令牌",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "角色或机器人及群授权范围不符",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "幂等键或requestId被不同正文占用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "正文超过16384字节",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "请求过期或未来时间超限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "处罚队列已满",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "未配置管理员令牌、循环执行器或本地登记存储不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/moderation/player-sanction-summary": {
+      "post": {
+        "summary": "管理员精确SteamID的可核验封禁周期及实际完整解封次数下界，只读本地台账",
+        "security": [
+          {
+            "adminModerationBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminPlayerSanctionSummaryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "complete仅表示有界本地查询完成；historyComplete=false，显示至少N次；unknownItems不可与次数相加",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminPlayerSanctionSummaryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "正文不是严格steamId/actor/requestedAt或SteamID非精确17位ASCII",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "未配置、本地台账不可读、每表目标超过5000条、SQL预算2秒耗尽或响应处理超过15秒；不返回假0或部分结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/moderation/player-chats": {
+      "post": {
+        "summary": "管理员按SteamID或昵称查询本地双来源去重聊天，昵称多人返回候选",
+        "security": [
+          {
+            "adminModerationBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminPlayerChatsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "最新1至50条本地聊天或昵称身份候选，保留来源证据与不完整历史覆盖说明",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminPlayerChatsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "字段、SteamID或limit非法",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "请求、权限、范围、时效或存储错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "没有可信昵称关联身份",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModerationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

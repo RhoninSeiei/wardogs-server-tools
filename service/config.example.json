@@ -1,0 +1,20 @@
+{
+  "automatic_announcements_enabled": false,
+  "high_kd_kick": false,
+  "high_kill_kick": false,
+  "auto_native_ban_enabled": false,
+  "burst_ban_enabled": false,
+  "rejoin_guard_enabled": false,
+  "helicopter_fun_enabled": false,
+  "signature_fun_enabled": false,
+  "welcome_delivery_enabled": false,
+  "network_messages": [],
+  "community_messages": [],
+  "rules": [
+    "Welcome to the server."
+  ],
+  "global_rules": [
+    "Welcome to the server."
+  ],
+  "admin_moderation_scopes": []
+}
